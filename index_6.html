@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="lv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kartes plānotājs</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{--bg:#fff;--fg:#1d2330;--mut:#6b7385;--line:#e2e5ec;--acc:#1f6feb;--sel:#ff9f1c}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--fg);background:var(--bg)}
+  #app{display:flex;height:100%}
+  #side{width:290px;flex:none;border-right:1px solid var(--line);overflow-y:auto;padding:12px;background:#fafbfc}
+  #map{flex:1;height:100%}
+  h1{font-size:16px;margin:0 0 10px}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:16px 0 6px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  button,.btn{font:inherit;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 8px;cursor:pointer;color:var(--fg);text-align:left}
+  button:hover{border-color:var(--acc)}
+  button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+  .lib button{display:flex;align-items:center;gap:6px;font-size:12px}
+  .lib svg{width:22px;height:22px;flex:none}
+  input,select{font:inherit;padding:5px 6px;border:1px solid var(--line);border-radius:6px;width:100%;background:#fff}
+  label{display:block;font-size:12px;color:var(--mut);margin-top:6px}
+  .row{display:flex;gap:6px;align-items:center}
+  .row>*{flex:1}
+  #props{border:1px solid var(--line);border-radius:8px;padding:8px;background:#fff;display:none}
+  #hint{font-size:12px;color:var(--mut);margin-top:8px;min-height:18px}
+  .help{font-size:12px;color:var(--mut)}
+  .help kbd{border:1px solid var(--line);border-radius:3px;padding:0 4px;background:#fff;font-size:11px}
+  /* objekti */
+  .objm{width:0!important;height:0!important;background:none;border:none}
+  .obj{position:absolute;left:0;top:0;transform-origin:center center;cursor:move}
+  .obj svg.body{width:100%;height:100%;display:block;overflow:visible}
+  .obj .lbl{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:11px;font-weight:600;white-space:nowrap;color:#111;text-shadow:0 0 3px #fff,0 0 3px #fff;pointer-events:none}
+  .obj.sel{outline:2px dashed var(--sel);outline-offset:3px}
+  .obj .rot{display:none;position:absolute;left:50%;top:-26px;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:var(--sel);border:2px solid #fff;box-shadow:0 0 0 1px #0004;cursor:grab}
+  .obj .rot:after{content:"";position:absolute;left:50%;top:12px;width:1px;height:12px;background:var(--sel)}
+  .obj.sel .rot{display:block}
+  .vtx{width:12px!important;height:12px!important;margin:-6px 0 0 -6px!important;border-radius:50%;background:#fff;border:2px solid var(--sel)}
+  .linelbl{background:#fff;border:1px solid #0003;border-radius:4px;padding:0 4px;font-size:11px;white-space:nowrap}
+  @media (max-width:700px){#app{flex-direction:column-reverse}#side{width:100%;height:45%;border-right:0;border-top:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <h1>Kartes plānotājs</h1>
+    <div class="row"><input id="q" placeholder="Meklēt adresi…"><button id="qbtn" style="flex:none">Meklēt</button></div>
+
+    <h2>Objekti (klikšķis → novieto kartē)</h2>
+    <div class="grid lib" id="lib"></div>
+
+    <h2>Plūsmas līnijas</h2>
+    <div class="grid" id="flows"></div>
+
+    <div id="hint"></div>
+
+    <h2>Izvēlētais</h2>
+    <div id="props"></div>
+    <div id="noSel" class="help">Nekas nav izvēlēts. Uzklikšķini objektam vai līnijai.</div>
+
+    <h2>Fails</h2>
+    <div class="grid">
+      <button id="exp">Eksportēt JSON</button>
+      <button id="imp">Importēt JSON</button>
+      <button id="clr">Notīrīt visu</button>
+      <button id="fit">Rādīt visu</button>
+    </div>
+    <input type="file" id="file" accept=".json,application/json" hidden>
+
+    <h2>Īsceļi</h2>
+    <div class="help">
+      <kbd>Ctrl</kbd>+<kbd>D</kbd> dublēt · <kbd>Del</kbd> dzēst<br>
+      <kbd>Q</kbd>/<kbd>E</kbd> rotēt ±15° (ar <kbd>Shift</kbd> ±1°)<br>
+      Bultiņas: pārvietot 0,5 m · <kbd>Esc</kbd> atcelt<br>
+      Rotācijas rokturis: velc oranžo punktu (Shift = solis 15°)<br>
+      Līnija: klikšķini punktus, dubultklikšķis vai <kbd>Enter</kbd> pabeidz.<br>
+      Izvēlētai līnijai: velc punktus, labais klikšķis uz punkta to dzēš, <kbd>Alt</kbd>+klikšķis kartē pievieno punktu.
+    </div>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.js"></script>
+<script>
+(() => {
+// ---------- Objektu bibliotēka (izmēri metros: w = platums, l = garums) ----------
+const C = (fill, extra='') => ({fill, extra});
+const TYPES = {
+  car:      {name:'Auto',            w:1.8,  l:4.5,  svg:(c)=>`<rect x="5" y="2" width="90" height="96" rx="22" fill="${c}" stroke="#222" stroke-width="3"/><rect x="15" y="18" width="70" height="16" rx="5" fill="#cfe3f5"/><rect x="15" y="70" width="70" height="12" rx="4" fill="#cfe3f5"/>`, color:'#3b82f6'},
+  van:      {name:'Mikroautobuss',   w:2.0,  l:6.0,  svg:(c)=>`<rect x="5" y="2" width="90" height="96" rx="12" fill="${c}" stroke="#222" stroke-width="3"/><rect x="13" y="8" width="74" height="12" rx="4" fill="#cfe3f5"/>`, color:'#0ea5e9'},
+  bus:      {name:'Autobuss',        w:2.55, l:12.0, svg:(c)=>`<rect x="5" y="1" width="90" height="98" rx="8" fill="${c}" stroke="#222" stroke-width="3"/><rect x="12" y="4" width="76" height="5" rx="2" fill="#cfe3f5"/>`, color:'#f59e0b'},
+  truck:    {name:'Kravas auto',     w:2.5,  l:10.0, svg:(c)=>`<rect x="8" y="2" width="84" height="20" rx="6" fill="#555" stroke="#222" stroke-width="3"/><rect x="5" y="25" width="90" height="73" rx="3" fill="${c}" stroke="#222" stroke-width="3"/>`, color:'#a3a3a3'},
+  tent3:    {name:'Telts 3×3',       w:3,    l:3,    svg:(c)=>tent(c), color:'#ffffff'},
+  tent6:    {name:'Telts 6×12',      w:6,    l:12,   svg:(c)=>tent(c), color:'#ffffff'},
+  cont20:   {name:'Konteiners 20\'', w:2.44, l:6.06, svg:(c)=>cont(c), color:'#b45309'},
+  cont40:   {name:'Konteiners 40\'', w:2.44, l:12.19,svg:(c)=>cont(c), color:'#15803d'},
+  wc:       {name:'WC kabīne',       w:1.2,  l:1.2,  svg:(c)=>`<rect x="3" y="3" width="94" height="94" rx="6" fill="${c}" stroke="#222" stroke-width="4"/><text x="50" y="62" font-size="34" text-anchor="middle" font-family="sans-serif" font-weight="700" fill="#fff">WC</text>`, color:'#2563eb'},
+  stage:    {name:'Skatuve',         w:10,   l:8,    svg:(c)=>`<rect x="2" y="2" width="96" height="96" fill="${c}" stroke="#222" stroke-width="2"/><rect x="2" y="2" width="96" height="10" fill="#222"/>`, color:'#6b21a8'},
+  gen:      {name:'Ģenerators',      w:1.5,  l:3,    svg:(c)=>`<rect x="4" y="4" width="92" height="92" rx="5" fill="${c}" stroke="#222" stroke-width="4"/><path d="M55 15 35 55h18l-8 30 22-42H49z" fill="#ffd400"/>`, color:'#374151'},
+  fence:    {name:'Barjera',         w:0.5,  l:2.5,  svg:(c)=>`<rect x="20" y="1" width="60" height="98" fill="${c}" stroke="#222" stroke-width="4"/>`, color:'#e11d48'},
+  table:    {name:'Galds',           w:0.8,  l:2.0,  svg:(c)=>`<rect x="4" y="4" width="92" height="92" rx="4" fill="${c}" stroke="#222" stroke-width="4"/>`, color:'#d6a76b'},
+  entry:    {name:'Ieeja',           w:3,    l:3,    entry:true, svg:(c)=>`<circle cx="50" cy="50" r="40" fill="${c}" stroke="#fff" stroke-width="6"/><path d="M50 20 72 52H58v28H42V52H28z" fill="#fff"/>`, color:'#16a34a'},
+  rect:     {name:'Brīva forma',     w:5,    l:5,    svg:(c)=>`<rect x="2" y="2" width="96" height="96" fill="${c}" fill-opacity=".45" stroke="#222" stroke-width="2" stroke-dasharray="6 4"/>`, color:'#94a3b8'},
+};
+function tent(c){return `<rect x="2" y="2" width="96" height="96" fill="${c}" stroke="#222" stroke-width="3"/><path d="M2 2 98 98M98 2 2 98" stroke="#888" stroke-width="2"/>`}
+function cont(c){let s=`<rect x="3" y="2" width="94" height="96" fill="${c}" stroke="#222" stroke-width="3"/>`;for(let i=1;i<10;i++)s+=`<line x1="3" x2="97" y1="${i*10}" y2="${i*10}" stroke="#0004" stroke-width="2"/>`;return s}
+
+const FLOWS = {
+  car:   {name:'Auto plūsma',      color:'#dc2626', dash:null,    w:5},
+  bus:   {name:'Autobusi',         color:'#9333ea', dash:null,    w:5},
+  walk:  {name:'Gājēji',           color:'#2563eb', dash:'2 8',   w:4},
+  deliv: {name:'Piegāde',          color:'#ea580c', dash:'12 8',  w:4},
+  evac:  {name:'Evakuācija',       color:'#16a34a', dash:'10 6',  w:5},
+  bike:  {name:'Velo',             color:'#0891b2', dash:'4 6',   w:3},
+};
+
+// ---------- Karte un slāņi ----------
+const map = L.map('map',{zoomControl:true,maxZoom:22,doubleClickZoom:true}).setView([56.9496,24.1052],17);
+const G = (lyrs)=>L.tileLayer(`https://mt{s}.google.com/vt/lyrs=${lyrs}&x={x}&y={y}&z={z}`,{subdomains:'0123',maxZoom:22,maxNativeZoom:21,attribution:'© Google'});
+const base = {
+  'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:22,maxNativeZoom:19,attribution:'© OpenStreetMap'}),
+  'Esri satelīts': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:22,maxNativeZoom:19,attribution:'© Esri'}),
+  'Google karte': G('m'),
+  'Google satelīts': G('s'),
+  'Google hibrīds': G('y'),
+};
+const overlays = {
+  'OSM virsū (caurspīdīgs)': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:22,maxNativeZoom:19,opacity:.45}),
+  'Esri ielu nosaukumi': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',{maxZoom:22,maxNativeZoom:19}),
+};
+let baseName = load('baseLayer') || 'Google hibrīds';
+(base[baseName]||base['Google hibrīds']).addTo(map);
+L.control.layers(base,overlays,{collapsed:false}).addTo(map);
+L.control.scale({imperial:false}).addTo(map);
+map.on('baselayerchange',e=>save('baseLayer',e.name));
+
+// ---------- Stāvoklis ----------
+let state = {objects:[],lines:[]};
+const objLayers = new Map();   // id -> {marker, el}
+const lineLayers = new Map();  // id -> {poly, deco, label}
+let selected = null;           // {kind:'obj'|'line', id}
+let mode = null;               // {type:'place', t} | {type:'draw', kind, pts, temp}
+const uid = ()=>Math.random().toString(36).slice(2,10);
+
+function load(k){try{return JSON.parse(localStorage.getItem('kp_'+k))}catch(e){return null}}
+function save(k,v){try{localStorage.setItem('kp_'+k,JSON.stringify(v))}catch(e){}}
+let saveT; function persist(){clearTimeout(saveT);saveT=setTimeout(()=>save('state',state),300)}
+
+// metri -> pikseļi pašreizējā tālummaiņā
+function pxPerM(lat){return 256*Math.pow(2,map.getZoom())/(40075016.686*Math.cos(lat*Math.PI/180))}
+
+// ---------- Objekti ----------
+function addObject(o){
+  const t = TYPES[o.type]||TYPES.rect;
+  const el = document.createElement('div'); el.className='obj';
+  el.innerHTML = `<svg class="body" viewBox="0 0 100 100" preserveAspectRatio="none"></svg><div class="lbl"></div><div class="rot" title="Velc, lai rotētu"></div>`;
+  const icon = L.divIcon({className:'objm',html:el,iconSize:[0,0]});
+  const m = L.marker([o.lat,o.lng],{icon,draggable:true,keyboard:false}).addTo(map);
+  objLayers.set(o.id,{marker:m,el});
+  m.on('dragstart',()=>select('obj',o.id));
+  m.on('drag',()=>{const p=m.getLatLng();o.lat=p.lat;o.lng=p.lng});
+  m.on('dragend',()=>{persist();renderProps()});
+  m.on('click',e=>{L.DomEvent.stop(e);select('obj',o.id)});
+  // rotācijas rokturis
+  const h = el.querySelector('.rot');
+  const startRot = (ev)=>{
+    L.DomEvent.stop(ev); map.dragging.disable();
+    const move = (e)=>{
+      const pt = e.touches?e.touches[0]:e;
+      const c = map.latLngToContainerPoint(m.getLatLng());
+      const r = map.getContainer().getBoundingClientRect();
+      const dx = pt.clientX-r.left-c.x, dy = pt.clientY-r.top-c.y;
+      let a = Math.atan2(dx,-dy)*180/Math.PI;
+      if(e.shiftKey) a = Math.round(a/15)*15;
+      o.rot = ((Math.round(a)%360)+360)%360; drawObject(o); renderProps(true);
+    };
+    const up = ()=>{document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up);document.removeEventListener('touchmove',move);document.removeEventListener('touchend',up);map.dragging.enable();persist()};
+    document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);
+    document.addEventListener('touchmove',move,{passive:false});document.addEventListener('touchend',up);
+  };
+  ['mousedown','touchstart','pointerdown'].forEach(ev=>h.addEventListener(ev,ev==='pointerdown'?(e)=>e.stopPropagation():startRot));
+  drawObject(o);
+}
+function drawObject(o){
+  const L_ = objLayers.get(o.id); if(!L_) return;
+  const t = TYPES[o.type]||TYPES.rect, el=L_.el;
+  const k = pxPerM(o.lat);
+  let w = o.w*k, h = o.l*k;
+  if(t.entry){w=Math.max(w,22);h=Math.max(h,22)} else {w=Math.max(w,3);h=Math.max(h,3)}
+  el.style.width=w+'px'; el.style.height=h+'px';
+  el.style.transform=`translate(-50%,-50%) rotate(${o.rot||0}deg)`;
+  el.querySelector('svg').innerHTML = t.svg(o.color||t.color);
+  const lbl = el.querySelector('.lbl'); lbl.textContent = (w>30||t.entry)?(o.label||''):'';
+  lbl.style.transform=`translate(-50%,-50%) rotate(${-(o.rot||0)}deg)`;
+  if(t.entry) lbl.style.top = (h+10)+'px';
+  el.classList.toggle('sel', selected&&selected.kind==='obj'&&selected.id===o.id);
+  L_.marker.setLatLng([o.lat,o.lng]);
+}
+function newObject(type,latlng,extra={}){
+  const t=TYPES[type];
+  const o={id:uid(),type,lat:latlng.lat,lng:latlng.lng,rot:0,w:t.w,l:t.l,color:t.color,label:t.entry?'Ieeja':'',...extra};
+  state.objects.push(o); addObject(o); select('obj',o.id); persist(); return o;
+}
+function removeObject(id){
+  const L_=objLayers.get(id); if(L_) map.removeLayer(L_.marker);
+  objLayers.delete(id); state.objects=state.objects.filter(o=>o.id!==id);
+}
+
+// ---------- Līnijas ----------
+function addLine(ln){
+  const f = FLOWS[ln.kind]||FLOWS.car;
+  const poly = L.polyline(ln.pts,{color:f.color,weight:f.w,dashArray:f.dash,opacity:.9}).addTo(map);
+  const deco = L.polylineDecorator(poly,{patterns:[{offset:'8%',repeat:70,symbol:L.Symbol.arrowHead({pixelSize:16,polygon:true,pathOptions:{color:'#fff',fillColor:f.color,fillOpacity:1,weight:1.5}})}]}).addTo(map);
+  poly.on('click',e=>{L.DomEvent.stop(e);if(mode)return;select('line',ln.id)});
+  deco.on('click',e=>{L.DomEvent.stop(e);if(mode)return;select('line',ln.id)});
+  lineLayers.set(ln.id,{poly,deco,vtx:[],label:null});
+  drawLine(ln);
+}
+function drawLine(ln){
+  const L_=lineLayers.get(ln.id); if(!L_) return;
+  const f = FLOWS[ln.kind]||FLOWS.car;
+  const isSel = selected&&selected.kind==='line'&&selected.id===ln.id;
+  L_.poly.setLatLngs(ln.pts).setStyle({color:f.color,weight:isSel?f.w+3:f.w,dashArray:f.dash});
+  L_.deco.setPaths(L_.poly);
+  L_.deco.setPatterns([{offset:'8%',repeat:70,symbol:L.Symbol.arrowHead({pixelSize:16,polygon:true,pathOptions:{color:'#fff',fillColor:f.color,fillOpacity:1,weight:1.5}})}]);
+  if(L_.label){map.removeLayer(L_.label);L_.label=null}
+  if(ln.label && ln.pts.length>1){
+    const mid = ln.pts[Math.floor((ln.pts.length-1)/2)], nxt = ln.pts[Math.floor((ln.pts.length-1)/2)+1];
+    L_.label = L.marker([(mid[0]+nxt[0])/2,(mid[1]+nxt[1])/2],{interactive:false,icon:L.divIcon({className:'',html:`<span class="linelbl">${esc(ln.label)}</span>`,iconSize:null})}).addTo(map);
+  }
+  L_.vtx.forEach(v=>map.removeLayer(v)); L_.vtx=[];
+  if(isSel){
+    ln.pts.forEach((p,i)=>{
+      const v=L.marker(p,{draggable:true,icon:L.divIcon({className:'vtx',iconSize:[12,12]})}).addTo(map);
+      v.on('drag',()=>{const q=v.getLatLng();ln.pts[i]=[q.lat,q.lng];L_.poly.setLatLngs(ln.pts);L_.deco.setPaths(L_.poly)});
+      v.on('dragend',()=>{drawLine(ln);persist()});
+      v.on('contextmenu',e=>{L.DomEvent.stop(e);if(ln.pts.length>2){ln.pts.splice(i,1);drawLine(ln);persist()}});
+      L_.vtx.push(v);
+    });
+  }
+}
+function removeLine(id){
+  const L_=lineLayers.get(id); if(L_){[L_.poly,L_.deco,L_.label,...L_.vtx].forEach(x=>x&&map.removeLayer(x))}
+  lineLayers.delete(id); state.lines=state.lines.filter(l=>l.id!==id);
+}
+
+// ---------- Izvēle un īpašību panelis ----------
+function select(kind,id){
+  const prev=selected; selected = kind?{kind,id}:null;
+  if(prev){ if(prev.kind==='obj'){const o=getObj(prev.id);o&&drawObject(o)} else {const l=getLine(prev.id);l&&drawLine(l)} }
+  if(selected){ if(kind==='obj'){drawObject(getObj(id))} else drawLine(getLine(id)) }
+  renderProps();
+}
+const getObj=id=>state.objects.find(o=>o.id===id);
+const getLine=id=>state.lines.find(l=>l.id===id);
+const props=document.getElementById('props'), noSel=document.getElementById('noSel');
+function renderProps(onlyRot){
+  if(!selected){props.style.display='none';noSel.style.display='block';return}
+  props.style.display='block';noSel.style.display='none';
+  if(selected.kind==='obj'){
+    const o=getObj(selected.id); if(!o) return select(null);
+    if(onlyRot){const r=props.querySelector('#p_rot'),n=props.querySelector('#p_rotn');if(r){r.value=o.rot;n.value=o.rot}return}
+    const t=TYPES[o.type];
+    props.innerHTML=`
+      <b>${t.name}</b>
+      <label>Nosaukums</label><input id="p_label" value="${esc(o.label||'')}">
+      <label>Tips</label><select id="p_type">${Object.entries(TYPES).map(([k,v])=>`<option value="${k}" ${k===o.type?'selected':''}>${v.name}</option>`).join('')}</select>
+      <div class="row"><div><label>Platums, m</label><input id="p_w" type="number" step="0.1" min="0.1" value="${o.w}"></div>
+      <div><label>Garums, m</label><input id="p_l" type="number" step="0.1" min="0.1" value="${o.l}"></div></div>
+      <label>Rotācija, °</label><div class="row"><input id="p_rot" type="range" min="0" max="359" value="${o.rot||0}"><input id="p_rotn" type="number" min="0" max="359" value="${o.rot||0}" style="flex:none;width:64px"></div>
+      <label>Krāsa</label><input id="p_color" type="color" value="${o.color||t.color}">
+      <div class="grid" style="margin-top:8px"><button id="p_dup">Dublēt</button><button id="p_del">Dzēst</button></div>`;
+    on('#p_label','input',e=>{o.label=e.target.value;drawObject(o);persist()});
+    on('#p_type','change',e=>{const nt=TYPES[e.target.value];o.type=e.target.value;o.w=nt.w;o.l=nt.l;o.color=nt.color;drawObject(o);persist();renderProps()});
+    on('#p_w','input',e=>{const v=+e.target.value;if(v>0){o.w=v;drawObject(o);persist()}});
+    on('#p_l','input',e=>{const v=+e.target.value;if(v>0){o.l=v;drawObject(o);persist()}});
+    on('#p_rot','input',e=>{o.rot=+e.target.value;props.querySelector('#p_rotn').value=o.rot;drawObject(o);persist()});
+    on('#p_rotn','input',e=>{o.rot=((+e.target.value%360)+360)%360;props.querySelector('#p_rot').value=o.rot;drawObject(o);persist()});
+    on('#p_color','input',e=>{o.color=e.target.value;drawObject(o);persist()});
+    on('#p_dup','click',duplicate); on('#p_del','click',delSelected);
+  } else {
+    const ln=getLine(selected.id); if(!ln) return select(null);
+    if(onlyRot) return;
+    props.innerHTML=`
+      <b>Plūsmas līnija</b>
+      <label>Nosaukums</label><input id="p_label" value="${esc(ln.label||'')}">
+      <label>Veids</label><select id="p_kind">${Object.entries(FLOWS).map(([k,v])=>`<option value="${k}" ${k===ln.kind?'selected':''}>${v.name}</option>`).join('')}</select>
+      <div class="help" style="margin-top:6px">Garums: ${lineLength(ln.pts).toFixed(0)} m · punkti: ${ln.pts.length}</div>
+      <div class="grid" style="margin-top:8px"><button id="p_rev">Mainīt virzienu</button><button id="p_dup">Dublēt</button><button id="p_del">Dzēst</button></div>`;
+    on('#p_label','input',e=>{ln.label=e.target.value;drawLine(ln);persist()});
+    on('#p_kind','change',e=>{ln.kind=e.target.value;drawLine(ln);persist()});
+    on('#p_rev','click',()=>{ln.pts.reverse();drawLine(ln);persist()});
+    on('#p_dup','click',duplicate); on('#p_del','click',delSelected);
+  }
+}
+function on(sel,ev,fn){props.querySelector(sel).addEventListener(ev,fn)}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function lineLength(pts){let d=0;for(let i=1;i<pts.length;i++)d+=map.distance(pts[i-1],pts[i]);return d}
+
+// pārbīde metros
+function offset(lat,lng,dx,dy){return [lat+dy/111320, lng+dx/(111320*Math.cos(lat*Math.PI/180))]}
+
+function duplicate(){
+  if(!selected) return;
+  if(selected.kind==='obj'){
+    const o=getObj(selected.id); const [la,lo]=offset(o.lat,o.lng,Math.max(o.w,1)+1,0);
+    const c={...o,id:uid(),lat:la,lng:lo}; state.objects.push(c); addObject(c); select('obj',c.id);
+  } else {
+    const ln=getLine(selected.id); const c={...ln,id:uid(),pts:ln.pts.map(p=>offset(p[0],p[1],5,-5))};
+    state.lines.push(c); addLine(c); select('line',c.id);
+  }
+  persist();
+}
+function delSelected(){
+  if(!selected) return;
+  if(selected.kind==='obj') removeObject(selected.id); else removeLine(selected.id);
+  selected=null; renderProps(); persist();
+}
+
+// ---------- Bibliotēkas un plūsmu pogas ----------
+const hint=document.getElementById('hint');
+const lib=document.getElementById('lib');
+Object.entries(TYPES).forEach(([k,t])=>{
+  const b=document.createElement('button'); b.dataset.t=k;
+  b.innerHTML=`<svg viewBox="0 0 100 100" preserveAspectRatio="none">${t.svg(t.color)}</svg>${t.name}`;
+  b.onclick=()=>{ if(mode&&mode.type==='place'&&mode.t===k){setMode(null);return} setMode({type:'place',t:k}) };
+  lib.appendChild(b);
+});
+const flows=document.getElementById('flows');
+Object.entries(FLOWS).forEach(([k,f])=>{
+  const b=document.createElement('button'); b.dataset.f=k;
+  b.innerHTML=`<span style="display:inline-block;width:18px;height:0;border-top:3px ${f.dash?'dashed':'solid'} ${f.color};vertical-align:middle;margin-right:6px"></span>${f.name}`;
+  b.onclick=()=>{ if(mode&&mode.type==='draw'&&mode.kind===k){finishDraw();return} setMode({type:'draw',kind:k,pts:[],temp:null}) };
+  flows.appendChild(b);
+});
+function setMode(m){
+  if(mode&&mode.type==='draw'&&mode.temp) map.removeLayer(mode.temp);
+  mode=m;
+  document.querySelectorAll('#lib button,#flows button').forEach(b=>b.classList.remove('on'));
+  map.getContainer().style.cursor = m?'crosshair':'';
+  if(!m){hint.textContent='';map.doubleClickZoom.enable();return}
+  if(m.type==='place'){document.querySelector(`#lib [data-t="${m.t}"]`).classList.add('on');hint.textContent=`Klikšķini kartē, lai novietotu: ${TYPES[m.t].name} (Shift = vairākus pēc kārtas)`}
+  if(m.type==='draw'){document.querySelector(`#flows [data-f="${m.kind}"]`).classList.add('on');map.doubleClickZoom.disable();
+    m.temp=L.polyline([],{color:FLOWS[m.kind].color,weight:FLOWS[m.kind].w,dashArray:FLOWS[m.kind].dash}).addTo(map);
+    hint.textContent='Klikšķini punktus. Dubultklikšķis vai Enter pabeidz, Esc atceļ.'}
+}
+function finishDraw(){
+  if(!mode||mode.type!=='draw') return;
+  const pts=mode.pts.filter((p,i,a)=>i===0||p[0]!==a[i-1][0]||p[1]!==a[i-1][1]);
+  const kind=mode.kind; setMode(null);
+  if(pts.length<2) return;
+  const ln={id:uid(),kind,pts,label:''}; state.lines.push(ln); addLine(ln); select('line',ln.id); persist();
+}
+
+map.on('click',e=>{
+  if(mode&&mode.type==='place'){ newObject(mode.t,e.latlng); if(!e.originalEvent.shiftKey) setMode(null); return }
+  if(mode&&mode.type==='draw'){ mode.pts.push([e.latlng.lat,e.latlng.lng]); mode.temp.setLatLngs(mode.pts); return }
+  if(e.originalEvent.altKey && selected&&selected.kind==='line'){ // pievieno punktu tuvākajā segmentā
+    const ln=getLine(selected.id), p=map.latLngToLayerPoint(e.latlng); let best=0,bd=Infinity;
+    for(let i=1;i<ln.pts.length;i++){const d=L.LineUtil.pointToSegmentDistance(p,map.latLngToLayerPoint(ln.pts[i-1]),map.latLngToLayerPoint(ln.pts[i]));if(d<bd){bd=d;best=i}}
+    ln.pts.splice(best,0,[e.latlng.lat,e.latlng.lng]); drawLine(ln); persist(); return;
+  }
+  select(null);
+});
+map.on('dblclick',e=>{ if(mode&&mode.type==='draw'){ L.DomEvent.stop(e); finishDraw() } });
+map.on('mousemove',e=>{ if(mode&&mode.type==='draw'&&mode.pts.length){ mode.temp.setLatLngs([...mode.pts,[e.latlng.lat,e.latlng.lng]]) } });
+map.on('zoomend',()=>state.objects.forEach(drawObject));
+
+// ---------- Tastatūra ----------
+document.addEventListener('keydown',e=>{
+  if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if(e.key==='Escape'){ if(mode) setMode(null); else select(null); return }
+  if(e.key==='Enter' && mode&&mode.type==='draw'){ finishDraw(); return }
+  if(!selected) return;
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='d'){e.preventDefault();duplicate();return}
+  if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();delSelected();return}
+  if(selected.kind==='obj'){
+    const o=getObj(selected.id), step=e.shiftKey?1:15;
+    if(e.key.toLowerCase()==='q'){o.rot=((o.rot||0)-step+360)%360}
+    else if(e.key.toLowerCase()==='e'){o.rot=((o.rot||0)+step)%360}
+    else if(e.key.startsWith('Arrow')){e.preventDefault();const d=e.shiftKey?2:0.5;
+      const [la,lo]=offset(o.lat,o.lng,e.key==='ArrowRight'?d:e.key==='ArrowLeft'?-d:0,e.key==='ArrowUp'?d:e.key==='ArrowDown'?-d:0);o.lat=la;o.lng=lo}
+    else return;
+    drawObject(o); renderProps(true); persist();
+  }
+});
+
+// ---------- Meklēšana ----------
+async function search(){
+  const q=document.getElementById('q').value.trim(); if(!q) return;
+  hint.textContent='Meklē…';
+  try{
+    const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q));
+    const j=await r.json();
+    if(j[0]){map.setView([+j[0].lat,+j[0].lon],18);hint.textContent=j[0].display_name}else hint.textContent='Nekas netika atrasts.';
+  }catch(e){hint.textContent='Meklēšana neizdevās.'}
+}
+document.getElementById('qbtn').onclick=search;
+document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter')search()});
+
+// ---------- Fails ----------
+function clearAll(){[...state.objects].forEach(o=>removeObject(o.id));[...state.lines].forEach(l=>removeLine(l.id));selected=null;renderProps()}
+function loadState(s){
+  clearAll(); state={objects:s.objects||[],lines:s.lines||[]};
+  state.objects.forEach(addObject); state.lines.forEach(addLine);
+  if(s.view) map.setView(s.view.center,s.view.zoom);
+}
+document.getElementById('exp').onclick=()=>{
+  const data={...state,view:{center:[map.getCenter().lat,map.getCenter().lng],zoom:map.getZoom()}};
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,1)],{type:'application/json'}));
+  a.download='plans-'+new Date().toISOString().slice(0,10)+'.json';a.click();
+};
+document.getElementById('imp').onclick=()=>document.getElementById('file').click();
+document.getElementById('file').onchange=async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  try{loadState(JSON.parse(await f.text()));persist()}catch(err){alert('Nederīgs fails')}
+  e.target.value='';
+};
+document.getElementById('clr').onclick=()=>{if(confirm('Dzēst visus objektus un līnijas?')){clearAll();persist()}};
+document.getElementById('fit').onclick=()=>{
+  const pts=[...state.objects.map(o=>[o.lat,o.lng]),...state.lines.flatMap(l=>l.pts)];
+  if(pts.length) map.fitBounds(pts,{padding:[40,40],maxZoom:20});
+};
+map.on('moveend',()=>save('view',{center:[map.getCenter().lat,map.getCenter().lng],zoom:map.getZoom()}));
+
+// ---------- Starts ----------
+const saved=load('state'), view=load('view');
+if(saved) loadState(saved);
+if(view) map.setView(view.center,view.zoom);
+renderProps();
+})();
+</script>
+</body>
+</html>
